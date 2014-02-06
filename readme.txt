@@ -1,0 +1,1 @@
+place the karamja.png file in your SPS img folder
