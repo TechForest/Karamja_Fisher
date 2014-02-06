@@ -1,0 +1,409 @@
+program karamja_fisher;
+{$DEFINE SMART}
+{$I SRL-6/SRL.simba}
+{$i sps/sps-rs3.simba}
+
+type
+  colorInfo = record
+    cts: TColorSettings;
+    color, tol, min: integer;
+    area: TBox;
+end;
+
+var
+  walk_ways: T2DPointArray;
+  karamja: TSPSArea;
+  fishies: colorInfo;
+  CurrentSpot: TBox;
+  progyBmp, lobsters_caught, swordfish_caught, tuna_caught: integer;
+  _lobsters_caught, _swordfish_caught, _tuna_caught: integer;
+
+{
+[SETUP BELOW]
+}
+procedure declarePlayers;
+begin
+  setLength(players, 1);
+  with players[0] do
+  begin
+    strings[0]  := 'lobster';//[tuna, swordfish, lobster]
+    integers[0] := 18000;//min wait time for catching a new fish
+    loginName   := '';
+    password    := '';
+    isActive    := true;
+    isMember    := true;
+    world       := -1;
+  end;
+  currentPlayer := 0;
+end;
+{
+[END SETUP]
+}
+
+procedure initPaths;
+begin
+  karamja.setup('karamja', '', __DEFAULT_ACCURACY, __DEFAULT_TOLERANCE, 0.7);
+  setLength(walk_ways, 5);
+  walk_ways[0] := [Point(589, 119), Point(587, 130), Point(579, 133), Point(561, 137), Point(542, 137), Point(530, 149), Point(498, 151), Point(482, 157), Point(479, 176), Point(477, 188), Point(452, 188), Point(423, 202), Point(395, 216), Point(370, 237), Point(357, 251), Point(326, 250), Point(306, 262), Point(292, 268), Point(271, 274)];
+  walk_ways[1] := [Point(588, 117), Point(588, 127), Point(590, 142), Point(564, 153), Point(539, 161), Point(521, 148), Point(478, 167), Point(477, 185), Point(465, 198), Point(430, 204), Point(406, 219), Point(371, 236), Point(333, 247), Point(309, 256), Point(291, 265), Point(270, 276)];
+  walk_ways[2] := [Point(589, 128), Point(587, 139), Point(568, 153), Point(542, 161), Point(511, 151), Point(480, 164), Point(482, 188), Point(478, 210), Point(449, 220), Point(406, 229), Point(371, 243), Point(353, 249), Point(330, 252), Point(306, 263), Point(285, 267), Point(269, 277)];
+  walk_ways[3] := [Point(588, 123), Point(591, 130), Point(589, 142), Point(562, 146), Point(545, 153), Point(524, 154), Point(485, 158), Point(478, 172), Point(476, 189), Point(458, 223), Point(430, 221), Point(401, 221), Point(376, 234), Point(349, 248), Point(305, 262), Point(275, 273)];
+  walk_ways[4] := [Point(588, 126), Point(591, 137), Point(586, 152), Point(574, 159), Point(544, 157), Point(529, 150), Point(498, 146), Point(480, 183), Point(442, 196), Point(404, 216), Point(367, 239), Point(334, 253), Point(296, 261), Point(271, 275)];
+end;
+
+procedure initColors;
+begin
+  with fishies do
+  begin
+    cts.CTS := 2;
+      cts.modifier.hue := 0.11;
+    cts.modifier.saturation := 0.85;
+    cts.modifier.sensitivity := 15;
+    color := 13351854;
+    area := mainscreen.getBounds;
+    tol := 15;
+    min := 15;
+  end;
+end;
+
+function location: TPoint;
+var
+  places: TPointArray;
+  stiles_dist, dock_dist: integer;
+begin
+  result := karamja.getPlayerPos;
+  if result.equals([-1, -1]) then exit;
+
+  stiles_dist := distance(result, walk_ways[0][high(walk_ways[0])]);
+  dock_dist := distance(result, walk_ways[0][low(walk_ways[0])]);
+
+  if stiles_dist < 20 then players[currentPlayer].location := 'stiles' else
+    if dock_dist < 20 then players[currentPlayer].location := 'dock' else
+      players[currentPlayer].location := 'en_route';
+  writeln('Location: '+players[currentPlayer].location);
+end;
+
+function TPointArray.invrt(): TPointArray;
+var
+  tmp: TPointArray;
+begin
+  tmp := self;
+  invertTPA(tmp);
+  result := tmp;
+end;
+
+function walk(dest: string): boolean;
+var
+  path: TPointArray;
+  ourPos: TPoint;
+  p: TPoint;
+begin
+  ourPos := location;
+  if ourPos.equals([-1, -1]) then exit;
+  path := walk_ways[random(length(walk_ways))].copy;
+
+  if dest = 'dock' then path.invert;
+
+  if (distance(path[high(path)], ourPos) < 12) then exit(true);
+  karamja.walkPath(path);
+  minimap.waitPlayerMoving();
+  result := karamja.walkPath(path);
+end;
+
+function fishSpots(minWait: integer; searchArea: TBox; out fish2D: T2DPointArray; exitOnFind: boolean): boolean;
+var
+  fishySpots: T2DPointArray;
+  fishPoints: TPointArray;
+  findTime, i, h: integer;
+begin
+  fish2D := [];
+  findTime := getSystemTime + randomRange(minWait, round(minWait*1.3));
+  while getSystemTime < findTime do
+  begin
+    if findColorsTolerance(fishPoints, fishies.color, searchArea, fishies.tol, fishies.cts) then
+      if exitOnFind then exit(true) else insert(fishPoints, fishySpots);
+    wait(randomRange(100, 200));
+  end;
+  if length(fishySpots) > 0 then
+  begin
+    fishPoints := fishySpots.merge;
+    fishPoints.clearEquals;
+    fishySpots := fishPoints.toATPA(25, 25);
+    if length(fishySpots) > 0 then
+    begin
+      fish2D := fishySpots;
+      result := true;
+    end;
+  end;
+end;
+
+
+function TPointArray.centerPoint(): TPoint;
+var
+  tmpArray: TPointArray;
+begin
+  if length(self) < 1 then exit;
+  tmpArray := self;
+  tmpArray.sortFromPoint(self.getMiddle);
+  result := tmpArray[0];
+end;
+
+procedure setSpot(spot: TPoint);
+var
+  p: TPointArray;
+begin
+  //Points to check for fishing
+  //Clockwise starting at the top
+  p := [[287, 172], [318, 202], [287, 230], [260, 202]];
+  p.sortFromPoint(spot);
+  CurrentSpot := [p[0].x-8, p[0].y-8, p[0].x+8, p[0].y+8];
+
+end;
+
+function TRSChooseOption.close2(): boolean;
+var
+  t: integer;
+begin
+  t := getSystemTime + randomRange(2000,3000);
+  while (t > getSystemTime) do if self.isOpen then self.close else exit(true);
+end;
+
+function goFishing: boolean;
+var
+  fish: TPointArray;
+  spots: T2DPointArray;
+  i, h: integer;
+  sps_Pos: TPoint;
+  fishType: string;
+begin
+  if not (players[currentPlayer].location = 'dock') then exit;
+  case lowercase(players[currentPlayer].strings[0]) of
+    'lobster': fishType := 'Cage';
+    else fishType := 'Harpoon';
+  end;
+  if tabBackpack.isFull then exit;
+  CurrentSpot := [0, 0];
+  if fishSpots(1200, mainscreen.getBounds, spots, false) then
+  begin
+    h := high(spots);
+    for i := 0 to h do
+      insert(spots[i].centerPoint, fish);
+    fish.sortFromPoint(mainscreen.playerPoint);
+    for i := 0 to h do
+    begin
+      mouse(fish[i].randRange(-3, 3), Mouse_Right);
+      if chooseOption.select([fishType+' Fish'], randomRange(1000, 2000)) then
+      begin
+        sps_Pos := karamja.getPlayerPos;
+        if minimap.isFlagPresent(randomRange(1500, 3000)) then
+        begin
+          wait(randomRange(500, 800));
+          minimap.waitPlayerMoving();
+          wait(randomRange(500, 800));
+          if sps_Pos.equals(karamja.getPlayerPos) then setSpot(fish[i]);
+          exit(true);
+        end;
+      end else chooseOption.close2;
+    end;
+  end;
+end;
+
+function shift50: boolean;
+var
+  shift: integer;
+begin
+  shift := getPixelShift(mainscreen.playerbox, 50);
+  result := (shift > 450);
+end;
+
+function spotGone: boolean;
+var
+  tmpRay: T2DPointArray;
+begin
+  if tabBackpack.isFull then exit(true);
+  result := currentSpot.equals([0, 0]);
+  if not result then
+    result := not fishSpots(1500, CurrentSpot, tmpRay, true);
+end;
+
+procedure waitWhileFishing;
+var
+  threshold, invCount, shiftTime: integer;
+  wtime: integer;
+begin
+  smartImage.clearArea(mainscreen.getBounds);
+  smartImage.drawBox(CurrentSpot, false, 656583);
+  wtime := players[currentPlayer].integers[0];
+  threshold := getSystemTime + randomRange(wtime, round(wtime*1.3));
+  shiftTime := getSystemTime + randomRange(3500, 6000);
+  invCount := tabBackpack.count;
+  while (threshold > getSystemTime) and (shiftTime > getSystemTime) do
+  begin
+    wait(100);
+    status('Threshold: '+toStr(threshold-getSystemTime)+' - Shift: '+toStr(shiftTime-getSystemTime)+' - Location: '+players[currentPlayer].location);
+    if spotGone then exit;
+    if shift50 then shiftTime := getSystemTime + randomRange(3500, 5000);
+    if invCount <> tabBackpack.count then
+    begin
+      invCount := tabBackpack.count;
+      threshold := getSystemTime + randomRange(wtime, round(wtime*1.3));
+    end;
+  end;
+end;
+
+function findStiles: TPointArray;
+var
+  grayPoints: TPointArray;
+  bankers: T2DPointArray;
+  i, h: integer;
+begin
+  if findColorsTolerance(grayPoints, 3356481, mainscreen.getBounds, 6, colorSetting(2, 1.03, 1.70)) then
+  begin
+    bankers := grayPoints.toATPA(15, 15);
+    h := high(bankers);
+    for i := 0 to h do
+      if length(bankers[i]) > 9 then insert(bankers[i].centerPoint, result);
+    result.sortFromPoint(mainscreen.playerPoint);
+  end;
+end;
+
+function invNotFull: boolean;
+begin
+  result := not tabBackPack.isFull;
+end;
+
+function handleNoting: boolean;
+var
+  stilePoints: TPointArray;
+  i: integer;
+  threshold, timer: integer;
+begin
+  threshold := getSystemTime + randomRange(55000, 75000);
+  if walk('stiles') then
+  begin
+    repeat
+      if invNotFull then exit(true);
+      stilePoints := findStiles;
+      if length(stilePoints) > 0 then
+      begin
+        for i := 0 to high(stilePoints) do
+        begin
+          mouse(stilePoints[i], Mouse_Right);
+          if chooseOption.select(['Exchange'], randomRange(2500,3500)) then
+            if waitFunc(@invNotFull, randomRange(25, 225), randomRange(6000, 9000)) then exit(true);
+        end;
+      end;
+    until (getSystemTime > threshold);
+  end;
+end;
+
+procedure countFish;
+var
+  bcnts: TPointArray;
+  i: integer;
+begin
+  lobsters_caught := 0;
+  swordfish_caught := 0;
+  tuna_caught := 0;
+  if not tabBackpack.open then exit;
+  for i := 1 to 28 do
+  begin
+    findColors(bcnts, ITEM_OUTLINE_BLACK, tabBackpack.getSlotBox(i));
+    case length(bcnts) of
+      126: inc(lobsters_caught);
+      91: inc(swordfish_caught);
+      81: inc(tuna_caught);
+    end;
+  end;
+end;
+
+procedure printProgress;
+var
+  secondsElapsed, expPHour, totalEXP: extended;
+begin
+  _lobsters_caught := _lobsters_caught + lobsters_caught;
+  _swordfish_caught := _swordfish_caught + swordfish_caught;
+  _tuna_caught := _tuna_caught + tuna_caught;
+
+  totalEXP := (_swordfish_caught * 100) + (_lobsters_caught * 90) + (_tuna_caught * 80);
+  secondsElapsed := (getTimeRunning/1000);
+  expPHour := (totalEXP * 60 * 60) / secondsElapsed;
+
+  smartImage.clearArea(intToBox(576, 200, 798, 278));
+  smartImage.drawBox(intToBox(576, 200, 798, 278), true, 7890014);
+
+  smartImage.DrawText('Run Time: ' + msToTime(GetTimeRunning, TIME_SHORT), Point(618, 224), upchars, false, 1376386);
+  smartImage.DrawText('EXP/Hour: ' + toString(round(expPHour)), Point(618, 234), upchars, false, 1376386);
+  smartImage.DrawText('Total EXP: ' + toString(totalEXP), Point(618, 244), upchars, false, 1376386);
+  case lowercase(players[currentPlayer].strings[1]) of
+    'lobster': smartImage.DrawText('Lobster caught: ' + toString(_lobsters_caught), Point(618, 254), upchars, false, 1376386);
+    'tuna', 'swordfish': smartImage.DrawText('Swordfish: ' + toString(_swordfish_caught) + ' - Tuna: ' + toString(_tuna_caught), Point(618, 254), upchars, false, 1376386);
+  end;
+end;
+
+procedure prepareSelf;
+begin
+  wait(random(500, 1500));
+  minimap.clickCompass;
+  wait(random(500, 1500));
+  mainscreen.setAngle(MS_ANGLE_HIGH);
+  wait(random(1, 1500));
+end;
+
+procedure mainLoop;
+begin
+  if (not isLoggedIn) then
+  begin
+    print('We''re not logged in. respawning client.');
+    wait(randomRange(5000, 10000));
+    smartReloadClient((5 * 60000) + random(15000));
+
+    if (waitClientReady()) then
+    begin
+      print('Client succesfully loaded after reload');
+    end else
+    begin
+      print('Client never reloaded after restart..', TDebug.FATAL);
+      terminateScript;
+    end;
+    if not players[currentPlayer].isActive then players.next(false);
+    if players[currentPlayer].login then prepareSelf;
+    if not isLoggedIn then
+    begin
+      writeln('Terminating, not logged in.');
+      terminateScript;
+    end;
+  end;
+
+  location;
+
+  if tabBackpack.isFull then
+  begin
+    countFish;
+    if handleNoting then
+    begin
+      printProgress;
+      if walk('dock') then
+      begin
+      end else
+        print('Failed to walk to: '+players[currentPlayer].strings[0]);
+    end else print('Failed to handle banking');
+  end else
+  begin
+    if not(players[currentPlayer].location = 'dock') then walk('dock');
+    if goFishing then waitWhileFishing else if not(tabBackpack.isFull) then
+    wait(randomRange(100, 3000));
+  end;
+
+end;
+
+begin
+  smartEnableDrawing := true;
+  setupsrl;
+  declarePlayers;
+  initPaths;
+  initColors;
+  countFish
+  if not isLoggedIn then if players[currentPlayer].login then prepareSelf;
+  while (players.getActive > 0) do mainLoop;
+end.
